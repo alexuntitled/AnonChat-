@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fusion Talk — Incognito Talker</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght=0,700;1,700&display=swap" rel="stylesheet">
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+  <!-- Lucide Icons (transpiled/included via script for clean glass styling) -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+  <!-- Background Gradients -->
+  <div class="bg-glow bg-glow-1"></div>
+  <div class="bg-glow bg-glow-2"></div>
+  <div class="bg-glow bg-glow-3"></div>
+
+  <!-- App Wrapper (Blurred if not logged in) -->
+  <div class="app-container blurred-auth" id="app-wrapper">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar glass-panel">
+      <!-- Brand Logo -->
+      <div class="brand">
+        <div class="brand-icon">
+          <i data-lucide="shield-alert" class="glow-icon"></i>
+        </div>
+        <div class="brand-text">
+          <h1>Fusion Talk</h1>
+          <span>Incognito Talker</span>
+        </div>
+      </div>
+
+      <!-- Quick User Card -->
+      <div class="sidebar-user-card glass-card-nested" id="sidebar-user-card">
+        <div class="user-avatar-wrapper">
+          <div class="user-avatar" id="sidebar-avatar">🌱</div>
+          <span class="premium-badge-icon" id="sidebar-premium-badge" style="display: none;">💎</span>
+        </div>
+        <div class="user-info">
+          <h3 id="sidebar-name">Anonymous</h3>
+          <div class="user-level-row">
+            <span class="user-title" id="sidebar-title">Newbie</span>
+            <span class="user-lvl" id="sidebar-level">Lvl 1</span>
+          </div>
+          <div class="xp-bar-wrapper">
+            <div class="xp-bar" id="sidebar-xp-bar" style="width: 0%;"></div>
+          </div>
+          <div class="karma-row">
+            <span>XP: <strong id="sidebar-xp-text">0/50</strong></span>
+            <span>Karma: <strong id="sidebar-karma">0</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Nav List -->
+      <nav class="nav-menu">
+        <button class="nav-item active" data-view="home" id="nav-btn-home">
+          <i data-lucide="home"></i>
+          <span>Welcome Home</span>
+        </button>
+        <button class="nav-item" data-view="chat" id="nav-btn-chat">
+          <i data-lucide="message-square-plus"></i>
+          <span>Stranger Chat</span>
+        </button>
+        <button class="nav-item" data-view="rooms" id="nav-btn-rooms">
+          <i data-lucide="layout-grid"></i>
+          <span>Themed Rooms</span>
+          <span class="badge" id="online-rooms-badge">0</span>
+        </button>
+        <button class="nav-item" data-view="confessions" id="nav-btn-confessions">
+          <i data-lucide="megaphone"></i>
+          <span>Confessions</span>
+        </button>
+        <button class="nav-item" data-view="leaderboard" id="nav-btn-leaderboard">
+          <i data-lucide="trophy"></i>
+          <span>Leaderboard</span>
+        </button>
+        <button class="nav-item" data-view="premium" id="nav-btn-premium">
+          <i data-lucide="gem" class="premium-text-glow"></i>
+          <span class="premium-text-glow">Go Premium</span>
+        </button>
+        <button class="nav-item" data-view="settings" id="nav-btn-settings">
+          <i data-lucide="settings"></i>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <button class="icon-btn-toggle" id="btn-toggle-sound" title="Toggle Sound FX">
+          <i data-lucide="volume-2" id="sound-icon"></i>
+        </button>
+        <div class="app-status">
+          <span class="status-indicator online"></span>
+          <span>Gateway Connected</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Workspace -->
+    <main class="main-content">
+      
+      <!-- Welcome Home View -->
+      <section class="view-section active-view" id="view-home">
+        <div class="welcome-hero">
+          <div class="glass-tag">🔒 Fully Private & Encrypted</div>
+          <h2 class="hero-title">Meet Strangers<br><span class="accent-text">Without Identity.</span></h2>
+          <p class="hero-subtitle">Experience anonymous chat rooms, micro-profiles, secrets confession box, and custom karma scores - replica of @IncognitoTalkerbot.</p>
+          <div class="hero-actions">
+            <button class="btn btn-primary btn-glow" id="hero-start-chat-btn">
+              <i data-lucide="sparkles"></i>
+              <span>Match Stranger</span>
+            </button>
+            <button class="btn btn-secondary" id="hero-submit-confess-btn">
+              <i data-lucide="megaphone"></i>
+              <span>Confess Secret</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Quick Stats Grid -->
+        <div class="dashboard-grid">
+          <div class="dashboard-card glass-card">
+            <div class="card-icon cyan"><i data-lucide="users"></i></div>
+            <div class="card-details">
+              <span class="card-label">Matching Pool</span>
+              <h3 class="card-value" id="stat-matching-pool">1</h3>
+              <p class="card-desc">Active users currently in matching queue</p>
+            </div>
+          </div>
+          <div class="dashboard-card glass-card">
+            <div class="card-icon magenta"><i data-lucide="flame"></i></div>
+            <div class="card-details">
+              <span class="card-label">Active Users Online</span>
+              <h3 class="card-value" id="stat-active-chats">1</h3>
+              <p class="card-desc">Live accounts active on server</p>
+            </div>
+          </div>
+          <div class="dashboard-card glass-card">
+            <div class="card-icon yellow"><i data-lucide="heart-handshake"></i></div>
+            <div class="card-details">
+              <span class="card-label">Confessions Shared</span>
+              <h3 class="card-value" id="stat-confessions">3</h3>
+              <p class="card-desc">Secrets whispered anonymously</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Daily Challenge Card -->
+        <div class="daily-challenge-banner glass-card">
+          <div class="challenge-icon">🎯</div>
+          <div class="challenge-info">
+            <span class="challenge-badge">Daily Challenge</span>
+            <h3 class="challenge-title" id="challenge-title">The Conversationalist</h3>
+            <p class="challenge-desc" id="challenge-desc">Exchange at least 15 messages in a single chat room today to claim rewards.</p>
+            <div class="challenge-progress-row">
+              <div class="challenge-progress-track">
+                <div class="challenge-progress-bar" id="challenge-bar" style="width: 0%;"></div>
+              </div>
+              <span class="challenge-score" id="challenge-score">0 / 15</span>
+            </div>
+          </div>
+          <div class="challenge-rewards">
+            <div class="reward-pill"><span class="emoji">⭐</span> +25 XP</div>
+            <div class="reward-pill"><span class="emoji">🎭</span> +10 Karma</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stranger Chat View -->
+      <section class="view-section" id="view-chat">
+        <!-- Chat State 1: Idle -->
+        <div class="chat-state-container" id="chat-state-idle">
+          <div class="radial-glow-circle"></div>
+          <div class="chat-welcome">
+            <div class="chat-welcome-avatar">🕵️</div>
+            <h2>Stranger Chat</h2>
+            <p>Connect with someone new based on your interests or choose randomly.</p>
+            <div class="search-filters glass-card-nested">
+              <h3>Matchmaking Filters</h3>
+              <div class="filter-row">
+                <label>Match Gender:</label>
+                <div class="select-group" id="chat-filter-gender">
+                  <button class="select-btn active" data-val="any">Any</button>
+                  <button class="select-btn" data-val="male">Male 💎</button>
+                  <button class="select-btn" data-val="female">Female 💎</button>
+                </div>
+              </div>
+              <div class="filter-row">
+                <label>Matching Mode:</label>
+                <div class="select-group" id="chat-filter-mode">
+                  <button class="select-btn active" data-val="random">Random Search</button>
+                  <button class="select-btn" data-val="interests">Interest Tags Match</button>
+                </div>
+              </div>
+              <div class="premium-filter-note" id="premium-filter-warning">
+                💡 <span class="premium-text-glow">Gender selection</span> requires Premium mode.
+              </div>
+            </div>
+            <button class="btn btn-primary btn-lg btn-glow" id="btn-start-search">
+              <i data-lucide="search"></i>
+              <span>Find Stranger</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Chat State 2: Searching -->
+        <div class="chat-state-container" id="chat-state-searching" style="display: none;">
+          <div class="radar-container">
+            <div class="radar-circle circle-1"></div>
+            <div class="radar-circle circle-2"></div>
+            <div class="radar-circle circle-3"></div>
+            <div class="radar-scan"></div>
+            <div class="radar-center">🕵️</div>
+          </div>
+          <h2 class="search-title">Finding a stranger...</h2>
+          <p class="search-sub">Searching matched profiles with interests: <span id="search-current-interests">None</span></p>
+          <div class="matching-stats">
+            <span>Pool Queue: <strong id="search-queue-count">1</strong> online</span>
+            <span class="divider">•</span>
+            <span>Elapsed: <strong id="search-elapsed">0s</strong></span>
+          </div>
+          <button class="btn btn-secondary" id="btn-cancel-search">
+            <i data-lucide="x"></i>
+            <span>Cancel Search</span>
+          </button>
+        </div>
+
+        <!-- Chat State 3: Chatting -->
+        <div class="chat-state-container" id="chat-state-active" style="display: none;">
+          <div class="chat-header glass-card-nested">
+            <div class="chat-partner-avatar" id="partner-avatar">👤</div>
+            <div class="chat-partner-info">
+              <div class="partner-meta-row">
+                <h3 id="partner-name">Stranger</h3>
+                <span class="partner-gender" id="partner-gender">Unset</span>
+                <span class="partner-age" id="partner-age">Age: Unset</span>
+              </div>
+              <p class="partner-status" id="partner-status">Connected</p>
+            </div>
+            <div class="chat-header-actions">
+              <button class="icon-btn" id="chat-btn-call" title="Request Audio Call">
+                <i data-lucide="phone"></i>
+              </button>
+              <button class="btn btn-danger btn-sm" id="chat-btn-stop" title="Stop Chat">
+                <i data-lucide="square"></i>
+                <span>Stop</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Message Body scroll -->
+          <div class="chat-messages-container" id="chat-messages">
+            <!-- Messages dynamic content -->
+          </div>
+
+          <!-- Typing Indicator -->
+          <div class="typing-indicator" id="chat-typing" style="display: none;">
+            <span class="dots"><span></span><span></span><span></span></span>
+            <span class="typing-text">Stranger is typing...</span>
+          </div>
+
+          <!-- Chat Input -->
+          <div class="chat-input-bar glass-card-nested">
+            <button class="input-action-btn" id="chat-btn-media" title="Upload Media (Photos & Videos)">
+              <i data-lucide="image"></i>
+            </button>
+            <input type="text" id="chat-message-input" placeholder="Type an incognito message..." autocomplete="off">
+            <button class="send-btn" id="chat-btn-send" title="Send message">
+              <i data-lucide="send"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Chat State 4: Post Chat Actions / Rating -->
+        <div class="chat-state-container" id="chat-state-rating" style="display: none;">
+          <div class="rating-card glass-card">
+            <h2>Chat Disconnected</h2>
+            <p>How was your conversation with <strong id="rating-partner-name">Stranger</strong>?</p>
+            
+            <div class="rating-buttons">
+              <button class="rating-btn like" id="btn-rating-like">
+                <span class="emoji">👍</span>
+                <span>Like Partner</span>
+                <small class="gain">+10 Karma / +15 XP</small>
+              </button>
+              <button class="rating-btn dislike" id="btn-rating-dislike">
+                <span class="emoji">👎</span>
+                <span>Dislike Partner</span>
+                <small class="loss">-2 Karma</small>
+              </button>
+            </div>
+
+            <div class="identity-action-card glass-card-nested" id="identity-reveal-section">
+              <div class="card-icon"><i data-lucide="key-round"></i></div>
+              <div class="card-details">
+                <h3>Identity Reveal Request</h3>
+                <p>Would you like to reveal your true profile (display name, bio, and interests) to this stranger? They must also agree to reveal their identity to see yours.</p>
+                <div class="reveal-actions-row">
+                  <button class="btn btn-primary" id="btn-reveal-accept">Reveal My Identity</button>
+                  <button class="btn btn-secondary" id="btn-reveal-decline">Keep Me Anonymous</button>
+                </div>
+                <div class="reveal-status-msg" id="reveal-status-msg" style="display: none;">
+                  Waiting for stranger to respond...
+                </div>
+              </div>
+            </div>
+
+            <button class="btn btn-secondary btn-full" id="btn-rating-close">
+              <span>Back to Lobby</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Themed Rooms View -->
+      <section class="view-section" id="view-rooms">
+        <div class="view-header">
+          <h2>🏠 Themed Chat Rooms</h2>
+          <p>Browse active servers. Join a room to match with like-minded users instantly.</p>
+        </div>
+
+        <!-- Active Room Window Grid -->
+        <div class="rooms-layout-container" id="rooms-lobby-layout">
+          <!-- Room cards grid -->
+          <div class="rooms-grid" id="rooms-grid-list">
+            <!-- Room cards dynamically populated here -->
+          </div>
+        </div>
+
+        <!-- Inside Room Chat Frame (Hidden initially) -->
+        <div class="room-chat-frame glass-panel" id="room-active-frame" style="display: none;">
+          <div class="room-chat-header">
+            <button class="icon-btn" id="room-btn-back" title="Back to rooms list">
+              <i data-lucide="arrow-left"></i>
+            </button>
+            <span class="room-header-emoji" id="room-active-emoji">🎮</span>
+            <div class="room-header-details">
+              <h3 id="room-active-name">Gaming</h3>
+              <p id="room-active-desc">Talk about your favorite games</p>
+            </div>
+            <div class="room-header-status">
+              <span class="status-indicator online"></span>
+              <span id="room-active-online">0 online</span>
+            </div>
+          </div>
+
+          <!-- Message scrolling space -->
+          <div class="room-messages-container" id="room-messages">
+            <!-- Simulated room chats -->
+          </div>
+
+          <!-- Room Input bar -->
+          <div class="room-input-bar glass-card-nested">
+            <input type="text" id="room-message-input" placeholder="Post anonymously in Gaming..." autocomplete="off">
+            <button class="send-btn" id="room-btn-send" title="Post Message">
+              <i data-lucide="send"></i>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Confessions View -->
+      <section class="view-section" id="view-confessions">
+        <div class="view-header-row">
+          <div class="view-header">
+            <h2>📢 Anonymous Confession Board</h2>
+            <p>Whisper your secrets, regrets, or stories anonymously. No user details are attached.</p>
+          </div>
+          <button class="btn btn-primary btn-glow" id="btn-open-confess-modal">
+            <i data-lucide="plus-circle"></i>
+            <span>Post Confession</span>
+          </button>
+        </div>
+
+        <!-- Confession Board Grid -->
+        <div class="confessions-timeline" id="confessions-timeline">
+          <!-- Dynamic confession cards -->
+        </div>
+
+        <!-- Confession Submission Modal (Glass card overlays) -->
+        <div class="custom-modal-backdrop" id="confess-modal-backdrop" style="display: none;">
+          <div class="glass-modal confession-modal">
+            <div class="modal-header">
+              <h3>📢 Whisper a Confession</h3>
+              <button class="modal-close-btn" id="btn-close-confess-modal"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+              <textarea id="confess-content" rows="6" placeholder="Type your deepest secret here... (Maximum 200 characters)" maxlength="200"></textarea>
+              <div class="color-picker-row">
+                <label>Card Style:</label>
+                <div class="color-options-group" id="confess-style-picker">
+                  <button class="color-option-btn style-1 active" data-style="1" title="Neon Purple"></button>
+                  <button class="color-option-btn style-2" data-style="2" title="Cyber Cyan"></button>
+                  <button class="color-option-btn style-3" data-style="3" title="Sunset Orange"></button>
+                  <button class="color-option-btn style-4" data-style="4" title="Dark Glass"></button>
+                </div>
+              </div>
+              <div class="modal-info-box">
+                🛡️ <strong>Safety Check</strong>: Submissions pass an automated content filter before being released onto the board. No names or usernames are recorded.
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-secondary" id="btn-cancel-confess">Cancel</button>
+              <button class="btn btn-primary" id="btn-submit-confess">Submit Whisper</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Leaderboard View -->
+      <section class="view-section" id="view-leaderboard">
+        <div class="view-header">
+          <h2>🏆 Top Incognito Talkers</h2>
+          <p>The leaderboard ranking top anonymous chatters based on user activity.</p>
+        </div>
+
+        <!-- Leaderboard Selector -->
+        <div class="leaderboard-tabs glass-card-nested">
+          <button class="lb-tab active" data-cat="karma" id="lb-tab-karma">
+            <i data-lucide="award"></i>
+            <span>Karma Points</span>
+          </button>
+          <button class="lb-tab" data-cat="xp" id="lb-tab-xp">
+            <i data-lucide="zap"></i>
+            <span>XP & Level</span>
+          </button>
+          <button class="lb-tab" data-cat="chats" id="lb-tab-chats">
+            <i data-lucide="message-square"></i>
+            <span>Total Chats</span>
+          </button>
+        </div>
+
+        <!-- Top Ranks Podium -->
+        <div class="podium-container" id="leaderboard-podium">
+          <!-- Dynamically populated top 3 ranks -->
+        </div>
+
+        <!-- Leaderboard Grid Table -->
+        <div class="leaderboard-table-wrapper glass-card">
+          <table class="leaderboard-table">
+            <thead>
+              <tr>
+                <th style="width: 10%;">Rank</th>
+                <th style="width: 45%;">Name</th>
+                <th style="width: 15%;">Level</th>
+                <th style="width: 30%; text-align: right;" id="lb-header-score">Score</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-tbody">
+              <!-- Dynamically populated ranks 4-10 -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Premium View -->
+      <section class="view-section" id="view-premium">
+        <div class="premium-hero">
+          <div class="premium-badge-tag">💎 Premium Membership</div>
+          <h2 class="premium-title">Unlock Infinite Limits</h2>
+          <p class="premium-desc">Upgrade to bypass matching limitations, unlock exclusive chat rooms, search by gender, and share unlimited high-quality media files.</p>
+        </div>
+
+        <div class="premium-comparison-grid">
+          <!-- Free Plan -->
+          <div class="plan-card glass-card">
+            <h3>Standard Chat</h3>
+            <div class="plan-price">Free</div>
+            <p class="plan-sub">Incognito access for everyone</p>
+            <ul class="plan-features">
+              <li><i data-lucide="check" class="green"></i> Random Matchmaking</li>
+              <li><i data-lucide="check" class="green"></i> Profile customization & bio</li>
+              <li><i data-lucide="check" class="green"></i> Browse chat rooms (Standard)</li>
+              <li><i data-lucide="x" class="red"></i> Gender Filter Matchmaking</li>
+              <li><i data-lucide="x" class="red"></i> Media sharing (Limit: 1 per chat)</li>
+              <li><i data-lucide="x" class="red"></i> Access to 💎 VIP Lounge Room</li>
+              <li><i data-lucide="x" class="red"></i> Double XP & daily login boosters</li>
+            </ul>
+            <button class="btn btn-secondary btn-full disabled">Current Plan</button>
+          </div>
+
+          <!-- Premium Plan -->
+          <div class="plan-card glass-card premium-selected">
+            <div class="popular-ribbon">VIP</div>
+            <h3>Premium Star Mode</h3>
+            <div class="plan-price">250 Stars <span class="period">/ 30 Days</span></div>
+            <p class="plan-sub">Unlock filters & unlimited media sharing</p>
+            <ul class="plan-features">
+              <li><i data-lucide="check" class="green"></i> Random & Interest Matchmaking</li>
+              <li><i data-lucide="check" class="green"></i> Profile customization & bio</li>
+              <li><i data-lucide="check" class="green"></i> Browse chat rooms (Standard)</li>
+              <li><i data-lucide="check" class="green"></i> <strong>Gender Filter Matchmaking</strong></li>
+              <li><i data-lucide="check" class="green"></i> <strong>Unlimited media file uploads</strong></li>
+              <li><i data-lucide="check" class="green"></i> <strong>Full Access to 💎 VIP Lounge</strong></li>
+              <li><i data-lucide="check" class="green"></i> <strong>Double XP & Level Boosts</strong></li>
+            </ul>
+            <button class="btn btn-primary btn-glow btn-full" id="btn-buy-premium">Upgrade to Premium</button>
+          </div>
+        </div>
+
+        <!-- Referral & Custom dates widget -->
+        <div class="referral-custom-box glass-card">
+          <div class="custom-box-header">
+            <i data-lucide="calendar" class="accent-icon"></i>
+            <div>
+              <h3>Invite & Select Reward Days</h3>
+              <p>Refer users to earn tokens, then choose precisely which days you'd like your premium access to be active! (Feature replica of <code>custom_premium_days</code>)</p>
+            </div>
+          </div>
+
+          <div class="referral-flex-layout">
+            <!-- Share link -->
+            <div class="referral-invite-card glass-card-nested">
+              <h4>Your Referral Link</h4>
+              <p>Share this link. For every user that registers, you receive <strong>1 Reward Token</strong> (equivalent to 1 day of premium).</p>
+              <div class="link-copy-row">
+                <input type="text" readonly value="https://t.me/IncognitoTalkerbot?start=ref_184752" id="referral-link-input">
+                <button class="btn btn-primary btn-sm" id="btn-copy-ref">Copy</button>
+              </div>
+              <div class="rewards-count-row">
+                <div class="reward-token-stat">
+                  <span class="label">Tokens Available:</span>
+                  <strong id="ref-tokens-count">3 Tokens</strong>
+                </div>
+                <div class="reward-token-stat">
+                  <span class="label">Status:</span>
+                  <strong id="premium-expiry-status">Free Member</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Custom calendar -->
+            <div class="custom-calendar-card glass-card-nested">
+              <h4>Select Custom Premium Days</h4>
+              <p class="calendar-hint">Select dates below. Each selected day costs 1 Token. Press activate to unlock.</p>
+              
+              <!-- Calendar grid structure -->
+              <div class="calendar-wrapper">
+                <div class="calendar-header-row">
+                  <button class="cal-nav" id="btn-cal-prev"><i data-lucide="chevron-left"></i></button>
+                  <span class="cal-title" id="cal-month-year">July 2026</span>
+                  <button class="cal-nav" id="btn-cal-next"><i data-lucide="chevron-right"></i></button>
+                </div>
+                <div class="calendar-weekdays">
+                  <div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div>
+                </div>
+                <div class="calendar-days" id="calendar-days-grid">
+                  <!-- Generated via script -->
+                </div>
+              </div>
+
+              <button class="btn btn-primary btn-full" id="btn-activate-dates">
+                <span>Activate Selected Days</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings View -->
+      <section class="view-section" id="view-settings">
+        <div class="view-header">
+          <h2>⚙️ Preferences & Profile Setup</h2>
+          <p>Update your details, configure search tags, and manage your browser storage.</p>
+        </div>
+
+        <div class="settings-grid">
+          <!-- Profile Card -->
+          <div class="settings-card glass-card">
+            <h3>👤 Personal Profile</h3>
+            <p class="card-desc">Your profile is hidden until you explicitly request an identity reveal after a chat.</p>
+            
+            <div class="form-group">
+              <label for="profile-name-input">Display Name:</label>
+              <input type="text" id="profile-name-input" placeholder="Enter display name (e.g. IncognitoGuy)" maxlength="20">
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="profile-gender-select">Your Gender:</label>
+                <select id="profile-gender-select">
+                  <option value="unset">Unset / Prefer not to say</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="profile-age-select">Age Group:</label>
+                <select id="profile-age-select">
+                  <option value="unset">Unset</option>
+                  <option value="18-24">18-24 years</option>
+                  <option value="25-34">25-34 years</option>
+                  <option value="35-44">35-44 years</option>
+                  <option value="45+">45+ years</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="profile-bio-input">Biography:</label>
+              <textarea id="profile-bio-input" rows="3" placeholder="Tell strangers about yourself..." maxlength="150"></textarea>
+            </div>
+
+            <button class="btn btn-primary" id="btn-save-profile">Save Profile Changes</button>
+          </div>
+
+          <!-- Search Preferences & Tags -->
+          <div class="settings-card glass-card">
+            <h3>🎯 Matchmaking Preferences</h3>
+            <p class="card-desc">Matches are prioritized based on shared interest tags.</p>
+
+            <div class="form-group">
+              <label for="profile-gpref-select">Target Gender Match Preference:</label>
+              <select id="profile-gpref-select">
+                <option value="any">Any (Default)</option>
+                <option value="male">Male (Requires Premium)</option>
+                <option value="female">Female (Requires Premium)</option>
+                <option value="other">Other (Requires Premium)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Your Interest Tags:</label>
+              <p class="card-desc" style="margin-top: -6px;">Select tags below to pair with users sharing similar topics.</p>
+              
+              <div class="interest-tags-select-grid" id="settings-interests-grid">
+                <!-- Populated via script -->
+              </div>
+            </div>
+
+            <button class="btn btn-primary" id="btn-save-interests">Save Match Preferences</button>
+          </div>
+
+          <!-- Telegram Link Box -->
+          <div class="settings-card glass-card">
+            <h3>🔗 Link to Telegram Bot</h3>
+            <p class="card-desc">Link your web account to the Telegram bot to share premium status, XP levels, and rewards.</p>
+            <div class="link-code-box glass-card-nested" style="text-align: center; margin-top: 10px;">
+              <h4 style="font-size: 0.82rem; color: var(--text-muted);">Your Temporary Link Code</h4>
+              <div class="generated-code" id="settings-link-code" style="font-size: 2.2rem; font-weight: 800; color: var(--accent-cyan); letter-spacing: 4px; margin: 10px 0;">------</div>
+              <button class="btn btn-secondary btn-sm" id="btn-generate-link-code">Generate Code</button>
+              <p class="card-desc" style="margin-top: 10px; font-size: 0.72rem;">Type <code>/link &lt;code&gt;</code> in the Telegram bot to finalize linking.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account Data Controls -->
+        <div class="danger-zone-card glass-card">
+          <div class="danger-header">
+            <i data-lucide="log-out" class="red-icon"></i>
+            <div>
+              <h3>Logout of Portal</h3>
+              <p>Close your anonymous gateway session. You can login again later using your credentials.</p>
+            </div>
+          </div>
+          <button class="btn btn-danger" id="btn-logout-portal">Sign Out Account</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Gateway Authentication Overlay Modal -->
+  <div class="custom-modal-backdrop" id="auth-modal-backdrop" style="display: flex;">
+    <div class="glass-modal auth-modal">
+      <div class="auth-brand">
+        <div class="brand-icon"><i data-lucide="shield-alert"></i></div>
+        <h2>Incognito Portal</h2>
+        <span>Connect to Fusion Talk Gateway</span>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="auth-tab-login">Login</button>
+        <button class="auth-tab" id="auth-tab-signup">Register</button>
+      </div>
+      <form id="auth-form" class="auth-form">
+        <div class="form-group">
+          <label for="auth-username">Anonymous Username:</label>
+          <input type="text" id="auth-username" required placeholder="Choose a handle (e.g. shadow_rider)">
+        </div>
+        <div class="form-group">
+          <label for="auth-password">Secret Password:</label>
+          <input type="password" id="auth-password" required placeholder="Enter secret password">
+        </div>
+        <div class="auth-error-msg" id="auth-error-msg" style="display: none; color: var(--accent-red); font-size: 0.8rem; text-align: center; margin-bottom: 10px;"></div>
+        <button type="submit" class="btn btn-primary btn-glow btn-full" id="auth-submit-btn">Login to Gateway</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Audio Ringing Overlay (Simulated Calling Screen) -->
+  <div class="custom-modal-backdrop" id="call-modal-backdrop" style="display: none;">
+    <div class="glass-modal calling-modal">
+      <div class="calling-pulse-waves">
+        <div class="pulse-wave wave-1"></div>
+        <div class="pulse-wave wave-2"></div>
+        <div class="pulse-wave wave-3"></div>
+        <div class="calling-avatar" id="call-avatar">👤</div>
+      </div>
+      <h3 class="calling-title" id="call-title">Calling Stranger...</h3>
+      <p class="calling-status" id="call-status">Requesting audio connection</p>
+      
+      <div class="call-controls">
+        <button class="call-btn accept" id="btn-call-accept" style="display: none;">
+          <i data-lucide="phone"></i>
+        </button>
+        <button class="call-btn decline" id="btn-call-decline">
+          <i data-lucide="phone-off"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shared Custom Popup System -->
+  <div class="custom-popup-notification" id="custom-notification">
+    <div class="notif-icon" id="notif-icon"><i data-lucide="info"></i></div>
+    <div class="notif-content">
+      <h4 id="notif-title">System Alert</h4>
+      <p id="notif-message">Operation successful.</p>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="app.js"></script>
+</body>
+</html>
