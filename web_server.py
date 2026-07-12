@@ -1,40 +1,94 @@
+"""
+Fusion Talk Web Server - Fully Self-Contained Backend
+No imports from bot/ — works as a standalone upload to GitHub Codespaces.
+"""
 import asyncio
 import os
 import random
 import string
 import hashlib
-from typing import Dict, List, Set
+from typing import Dict, List, Optional
 from datetime import datetime, date
 
+import aiosqlite
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Depends, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from bot.database.connection import get_db
-from bot.database.models import init_db
+# ── Database Path (self-contained, no bot/ import needed) ───────────────────
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "fusion_talk.db")
 
-app = FastAPI(title="Fusion Talk Server")
+_db: Optional[aiosqlite.Connection] = None
 
-# Allow CORS for codespace flexibility
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+async def get_db() -> aiosqlite.Connection:
+    global _db
+    if _db is None:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        _db = await aiosqlite.connect(DB_PATH)
+        _db.row_factory = aiosqlite.Row
+        await _db.execute("PRAGMA journal_mode=WAL")
+        await _db.execute("PRAGMA foreign_keys=ON")
+    return _db
 
-# ── Password Hashing Helper ──────────────────────────────────────────
+# ── Inline Schema Definition ─────────────────────────────────────────────────
+WEB_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS web_users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name  TEXT NOT NULL DEFAULT 'Anonymous',
+    gender        TEXT DEFAULT 'unset',
+    age_group     TEXT DEFAULT 'unset',
+    interests     TEXT DEFAULT '',
+    bio           TEXT DEFAULT '',
+    gender_pref   TEXT DEFAULT 'any',
+    karma_points  INTEGER DEFAULT 0,
+    xp            INTEGER DEFAULT 0,
+    level         INTEGER DEFAULT 1,
+    total_chats   INTEGER DEFAULT 0,
+    is_premium    INTEGER DEFAULT 0,
+    premium_until TIMESTAMP,
+    telegram_id   INTEGER,
+    referral_tokens INTEGER DEFAULT 3,
+    custom_premium_days TEXT DEFAULT '',
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS linking_tokens (
+    token         TEXT PRIMARY KEY,
+    web_user_id   INTEGER NOT NULL,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (web_user_id) REFERENCES web_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS confessions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL,
+    content       TEXT NOT NULL,
+    style         TEXT DEFAULT '1',
+    status        TEXT DEFAULT 'approved',
+    likes         INTEGER DEFAULT 0,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES web_users(id)
+);
+"""
+
+async def init_web_db():
+    """Create all web tables if they do not exist."""
+    db = await get_db()
+    await db.executescript(WEB_SCHEMA_SQL)
+    await db.commit()
+
+# ── Password Hashing ─────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
-    salt = "incognito_salt_984"
+    salt = "incognito_fusion_salt_984"
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
-# ── Session Memory Store ─────────────────────────────────────────────
-# token -> user_id
+# ── In-Memory Session Store: token -> user_id ────────────────────────────────
 active_sessions: Dict[str, int] = {}
 
-# ── Pydantic Request Models ──────────────────────────────────────────
+# ── Pydantic Request Models ───────────────────────────────────────────────────
 class AuthModel(BaseModel):
     username: str
     password: str
@@ -51,81 +105,88 @@ class PrefUpdateModel(BaseModel):
 
 class ConfessionModel(BaseModel):
     content: str
-    style: str
+    style: str = "1"
 
-# ── Dependency: Get Web User from Token ──────────────────────────────
+# ── Auth Dependency ───────────────────────────────────────────────────────────
 async def get_current_user_id(authorization: str = Header(None)) -> int:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
     token = authorization.split(" ")[1]
-    if token not in active_sessions:
+    user_id = active_sessions.get(token)
+    if not user_id:
         raise HTTPException(status_code=401, detail="Session expired. Please log in again")
-    return active_sessions[token]
+    return user_id
 
-# ── Setup DB WAL mode on Startup ─────────────────────────────────────
+# ── FastAPI App ───────────────────────────────────────────────────────────────
+app = FastAPI(title="Fusion Talk Gateway")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Startup: Init DB ──────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
-    await init_db()
-    db = await get_db()
-    # Enable Write-Ahead Logging for high concurrency SQLite access
-    await db.execute("PRAGMA journal_mode=WAL")
-    await db.commit()
+    await init_web_db()
+    asyncio.create_task(room_background_chatter_loop())
 
-# ── REST API: Authentication ──────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# REST API
+# ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Auth: Signup ──────────────────────────────────────────────────────────────
 @app.post("/api/signup")
 async def signup(data: AuthModel):
     username = data.username.strip().lower()
     password = data.password
-    
-    if len(username) < 3 or len(password) < 4:
-        raise HTTPException(status_code=400, detail="Username must be >= 3 and password >= 4 chars")
-    
+
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+
     db = await get_db()
-    
-    # Check uniqueness
     cursor = await db.execute("SELECT id FROM web_users WHERE username = ?", (username,))
-    if await cursor.fetchone() is not None:
-        raise HTTPException(status_code=400, detail="Username already exists")
-    
+    if await cursor.fetchone():
+        raise HTTPException(status_code=400, detail="Username already taken. Choose another.")
+
     password_hash = hash_password(password)
-    
-    # Insert web user
+    display_name = f"User_{username[:6].capitalize()}"
+
     await db.execute(
-        """INSERT INTO web_users (username, password_hash, display_name)
-           VALUES (?, ?, ?)""",
-        (username, password_hash, f"User_{username[:4]}")
+        "INSERT INTO web_users (username, password_hash, display_name) VALUES (?, ?, ?)",
+        (username, password_hash, display_name)
     )
     await db.commit()
-    
-    return {"message": "Signup successful!"}
+    return {"message": "Account created successfully!"}
 
+# ── Auth: Login ───────────────────────────────────────────────────────────────
 @app.post("/api/login")
 async def login(data: AuthModel):
     username = data.username.strip().lower()
     password = data.password
-    
+
     db = await get_db()
-    
     cursor = await db.execute(
         "SELECT id, password_hash FROM web_users WHERE username = ?", (username,)
     )
     row = await cursor.fetchone()
-    if row is None:
+    if not row:
         raise HTTPException(status_code=400, detail="Invalid username or password")
-    
+
     user_id, stored_hash = row
     if hash_password(password) != stored_hash:
         raise HTTPException(status_code=400, detail="Invalid username or password")
-    
-    # Generate session token
+
     token = "".join(random.choices(string.ascii_letters + string.digits, k=32))
     active_sessions[token] = user_id
-    
     return {"token": token}
 
-# ── REST API: Profile management ──────────────────────────────────────
-
+# ── Profile: Get ──────────────────────────────────────────────────────────────
 @app.get("/api/profile")
 async def get_profile(user_id: int = Depends(get_current_user_id)):
     db = await get_db()
@@ -133,141 +194,120 @@ async def get_profile(user_id: int = Depends(get_current_user_id)):
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Profile not found")
-    
-    user_dict = dict(row)
-    
-    # Check Telegram premium linkage
-    if user_dict.get("telegram_id"):
-        cursor_tg = await db.execute(
-            "SELECT is_premium FROM users WHERE user_id = ?", (user_dict["telegram_id"],)
-        )
-        tg_row = await cursor_tg.fetchone()
-        if tg_row and tg_row[0] == 1:
-            user_dict["is_premium"] = 1
 
-    # Check custom premium days check (referral days)
+    user_dict = dict(row)
+
+    # Check custom premium days
     today_str = date.today().isoformat()
-    if user_dict.get("custom_premium_days"):
-        active_days = [d.strip() for d in user_dict["custom_premium_days"].split(",") if d.strip()]
-        if today_str in active_days:
-            user_dict["is_premium"] = 1
-            
-    # Clean sensitive fields before output
+    days_str = user_dict.get("custom_premium_days", "") or ""
+    active_days = [d.strip() for d in days_str.split(",") if d.strip()]
+    if today_str in active_days:
+        user_dict["is_premium"] = 1
+
     user_dict.pop("password_hash", None)
-    
     return user_dict
 
+# ── Profile: Update ───────────────────────────────────────────────────────────
 @app.post("/api/profile")
 async def update_profile(data: ProfileUpdateModel, user_id: int = Depends(get_current_user_id)):
     db = await get_db()
     await db.execute(
-        """UPDATE web_users 
-           SET display_name = ?, gender = ?, age_group = ?, bio = ?
-           WHERE id = ?""",
+        "UPDATE web_users SET display_name=?, gender=?, age_group=?, bio=? WHERE id=?",
         (data.displayName, data.gender, data.ageGroup, data.bio, user_id)
     )
     await db.commit()
     return {"message": "Profile updated!"}
 
+# ── Profile: Preferences ──────────────────────────────────────────────────────
 @app.post("/api/profile/preferences")
 async def update_preferences(data: PrefUpdateModel, user_id: int = Depends(get_current_user_id)):
     db = await get_db()
-    
-    # Premium check for gender matching filter
-    if data.genderPref != 'any':
-        cursor = await db.execute("SELECT is_premium FROM web_users WHERE id = ?", (user_id,))
-        p_row = await cursor.fetchone()
-        if not p_row or p_row[0] == 0:
-            raise HTTPException(status_code=403, detail="Gender matching filter requires premium")
-            
+
+    if data.genderPref != "any":
+        cur = await db.execute("SELECT is_premium FROM web_users WHERE id=?", (user_id,))
+        row = await cur.fetchone()
+        if not row or not row[0]:
+            raise HTTPException(status_code=403, detail="Gender filter requires Premium membership")
+
     interests_str = ",".join(data.interests)
     await db.execute(
-        """UPDATE web_users 
-           SET gender_pref = ?, interests = ?
-           WHERE id = ?""",
+        "UPDATE web_users SET gender_pref=?, interests=? WHERE id=?",
         (data.genderPref, interests_str, user_id)
     )
     await db.commit()
-    return {"message": "Matchmaking preferences saved!"}
+    return {"message": "Preferences saved!"}
 
-# ── REST API: Confessions ─────────────────────────────────────────────
-
+# ── Confessions ───────────────────────────────────────────────────────────────
 @app.get("/api/confessions")
 async def get_confessions():
     db = await get_db()
-    cursor = await db.execute("SELECT * FROM confessions ORDER BY id DESC LIMIT 50")
+    cursor = await db.execute(
+        "SELECT id, content, style, likes, created_at FROM confessions WHERE status='approved' ORDER BY id DESC LIMIT 50"
+    )
     rows = await cursor.fetchall()
-    
-    # Map rooms output
-    conf_list = []
+    result = []
     for r in rows:
-        conf_dict = dict(r)
-        # Mock times nicely
-        conf_dict["time"] = "Recently"
-        conf_list.append(conf_dict)
-        
-    return conf_list
+        d = dict(r)
+        # Friendly time label
+        try:
+            created = datetime.fromisoformat(d["created_at"])
+            delta = datetime.utcnow() - created
+            if delta.seconds < 3600:
+                d["time"] = f"{delta.seconds // 60}m ago"
+            elif delta.days == 0:
+                d["time"] = f"{delta.seconds // 3600}h ago"
+            else:
+                d["time"] = f"{delta.days}d ago"
+        except Exception:
+            d["time"] = "Recently"
+        result.append(d)
+    return result
 
 @app.post("/api/confession")
 async def post_confession(data: ConfessionModel, user_id: int = Depends(get_current_user_id)):
     content = data.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Content cannot be empty")
-        
+
     db = await get_db()
-    # Insert confession directly
     await db.execute(
-        """INSERT INTO confessions (user_id, content, status, likes)
-           VALUES (?, ?, 'approved', 0)""",
-        (user_id, content)
+        "INSERT INTO confessions (user_id, content, style, status, likes) VALUES (?, ?, ?, 'approved', 0)",
+        (user_id, content, data.style)
     )
-    # Reward XP for submission
     await db.execute(
-        "UPDATE web_users SET xp = xp + 15, karma_points = karma_points + 5 WHERE id = ?",
-        (user_id,)
+        "UPDATE web_users SET xp=xp+15, karma_points=karma_points+5 WHERE id=?", (user_id,)
     )
     await db.commit()
     return {"message": "Confession posted!"}
 
-@app.post("/api/confession/{id}/like")
-async def like_confession(id: int, user_id: int = Depends(get_current_user_id)):
+@app.post("/api/confession/{conf_id}/like")
+async def like_confession(conf_id: int, user_id: int = Depends(get_current_user_id)):
     db = await get_db()
-    await db.execute("UPDATE confessions SET likes = likes + 1 WHERE id = ?", (id,))
-    # Reward author
-    cursor_author = await db.execute("SELECT user_id FROM confessions WHERE id = ?", (id,))
-    author_row = await cursor_author.fetchone()
+    await db.execute("UPDATE confessions SET likes=likes+1 WHERE id=?", (conf_id,))
+    cur = await db.execute("SELECT user_id FROM confessions WHERE id=?", (conf_id,))
+    author_row = await cur.fetchone()
     if author_row:
-        author_id = author_row[0]
         await db.execute(
-            "UPDATE web_users SET xp = xp + 5, karma_points = karma_points + 3 WHERE id = ?",
-            (author_id,)
+            "UPDATE web_users SET xp=xp+5, karma_points=karma_points+3 WHERE id=?",
+            (author_row[0],)
         )
     await db.commit()
-    return {"message": "Confession liked!"}
+    return {"message": "Liked!"}
 
-# ── REST API: Leaderboard ─────────────────────────────────────────────
-
+# ── Leaderboard ───────────────────────────────────────────────────────────────
 @app.get("/api/leaderboard")
 async def get_leaderboard(category: str = "karma"):
     db = await get_db()
-    
-    column = "karma_points"
-    if category == "xp":
-        column = "xp"
-    elif category == "chats":
-        column = "total_chats"
-        
-    # Get top users combining web users and Telegram users to display real-time ranks
+    col_map = {"karma": "karma_points", "xp": "xp", "chats": "total_chats"}
+    column = col_map.get(category, "karma_points")
+
     cursor = await db.execute(
-        f"SELECT display_name, {column} as score, level, '🌱' as avatar FROM web_users "
-        f"ORDER BY {column} DESC LIMIT 15"
+        f"SELECT display_name, {column} as score, level FROM web_users ORDER BY {column} DESC LIMIT 15"
     )
     rows = await cursor.fetchall()
-    
-    leaderboard = []
+    result = []
     for r in rows:
         d = dict(r)
-        # Assign matching avatar emoji based on level thresholds
         lvl = d.get("level", 1)
         if lvl >= 20: d["avatar"] = "🔥"
         elif lvl >= 15: d["avatar"] = "👑"
@@ -275,86 +315,75 @@ async def get_leaderboard(category: str = "karma"):
         elif lvl >= 5: d["avatar"] = "⭐"
         elif lvl >= 3: d["avatar"] = "🌳"
         elif lvl >= 2: d["avatar"] = "🌿"
-        leaderboard.append(d)
-        
-    return leaderboard
+        else: d["avatar"] = "🌱"
+        result.append(d)
+    return result
 
-# ── REST API: Premium Operations ──────────────────────────────────────
-
+# ── Premium ───────────────────────────────────────────────────────────────────
 @app.post("/api/premium/buy")
 async def buy_premium(user_id: int = Depends(get_current_user_id)):
     db = await get_db()
-    await db.execute("UPDATE web_users SET is_premium = 1, xp = xp + 50 WHERE id = ?", (user_id,))
+    await db.execute(
+        "UPDATE web_users SET is_premium=1, xp=xp+50 WHERE id=?", (user_id,)
+    )
     await db.commit()
-    return {"message": "Premium status upgraded!"}
+    return {"message": "Premium activated!"}
 
 @app.post("/api/premium/activate-dates")
-async def activate_premium_dates(dates: List[str], user_id: int = Depends(get_current_user_id)):
+async def activate_dates(dates: List[str], user_id: int = Depends(get_current_user_id)):
     db = await get_db()
-    
-    cursor = await db.execute("SELECT referral_tokens, custom_premium_days FROM web_users WHERE id = ?", (user_id,))
-    row = await cursor.fetchone()
+    cur = await db.execute(
+        "SELECT referral_tokens, custom_premium_days FROM web_users WHERE id=?", (user_id,)
+    )
+    row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
-        
-    tokens, current_days_str = row
+
+    tokens, days_str = row
     if tokens < len(dates):
-        raise HTTPException(status_code=400, detail="Insufficient referral tokens")
-        
-    current_days = [d.strip() for d in current_days_str.split(",") if d.strip()]
+        raise HTTPException(status_code=400, detail="Not enough referral tokens")
+
+    current = [d.strip() for d in (days_str or "").split(",") if d.strip()]
     for d in dates:
-        if d not in current_days:
-            current_days.append(d)
-            
-    updated_days_str = ",".join(current_days)
-    new_tokens = tokens - len(dates)
-    
+        if d not in current:
+            current.append(d)
+
     await db.execute(
-        "UPDATE web_users SET referral_tokens = ?, custom_premium_days = ? WHERE id = ?",
-        (new_tokens, updated_days_str, user_id)
+        "UPDATE web_users SET referral_tokens=?, custom_premium_days=? WHERE id=?",
+        (tokens - len(dates), ",".join(current), user_id)
     )
     await db.commit()
     return {"message": "Dates activated!"}
 
+# ── Telegram Link Code ────────────────────────────────────────────────────────
 @app.get("/api/telegram/link-code")
 async def get_link_code(user_id: int = Depends(get_current_user_id)):
     db = await get_db()
-    
-    # Check if code already exists
-    cursor = await db.execute("SELECT token FROM linking_tokens WHERE web_user_id = ?", (user_id,))
-    row = await cursor.fetchone()
+    cur = await db.execute(
+        "SELECT token FROM linking_tokens WHERE web_user_id=?", (user_id,)
+    )
+    row = await cur.fetchone()
     if row:
         return {"code": row[0]}
-        
-    # Generate new random 6 digit code
+
     code = "".join(random.choices(string.digits, k=6))
     await db.execute(
-        "INSERT INTO linking_tokens (token, web_user_id) VALUES (?, ?)",
+        "INSERT OR REPLACE INTO linking_tokens (token, web_user_id) VALUES (?, ?)",
         (code, user_id)
     )
     await db.commit()
-    
     return {"code": code}
 
-# ── 13. Real-Time WebSockets Engine ─────────────────────────────────────
-
-# Active Web Connection Sockets Tracker
+# ═══════════════════════════════════════════════════════════════════════════════
+# WebSocket Real-Time Engine
+# ═══════════════════════════════════════════════════════════════════════════════
 class ConnectionManager:
     def __init__(self):
-        # ws -> user_id
         self.active_connections: Dict[WebSocket, int] = {}
-        # user_id -> ws
         self.user_websockets: Dict[int, WebSocket] = {}
-        
-        # Matchmaking Queue (user_id list)
         self.matching_queue: List[int] = []
-        
-        # Active matched pairs: user_id -> user_id
         self.active_matches: Dict[int, int] = {}
-        # Active match websocket pairs: ws -> ws
         self.websocket_pairs: Dict[WebSocket, WebSocket] = {}
-        
-        # Room subscribers: room_id -> list of websockets
         self.room_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
@@ -367,119 +396,92 @@ class ConnectionManager:
         user_id = self.active_connections.pop(websocket, None)
         if user_id:
             self.user_websockets.pop(user_id, None)
-            # Remove from matching queue
             if user_id in self.matching_queue:
                 self.matching_queue.remove(user_id)
-            # Remove matching pairs
             partner_id = self.active_matches.pop(user_id, None)
             if partner_id:
                 self.active_matches.pop(partner_id, None)
-                # Notify partner
-                partner_ws = self.user_websockets.get(partner_id)
-                if partner_ws:
+                pws = self.user_websockets.get(partner_id)
+                if pws:
                     try:
-                        await partner_ws.send_json({"type": "disconnected", "reason": "Partner left the chat"})
+                        await pws.send_json({"type": "disconnected", "reason": "Partner left"})
                     except Exception:
                         pass
-                        
-            partner_ws = self.websocket_pairs.pop(websocket, None)
-            if partner_ws:
-                self.websocket_pairs.pop(partner_ws, None)
-                
-        # Remove from room active registers
+            pws2 = self.websocket_pairs.pop(websocket, None)
+            if pws2:
+                self.websocket_pairs.pop(pws2, None)
+
         for r_id in list(self.room_connections.keys()):
             if websocket in self.room_connections[r_id]:
                 self.room_connections[r_id].remove(websocket)
                 await self.broadcast_room_stats(r_id)
-                
         await self.broadcast_global_stats()
 
-    # Matchmaking & Relays
     async def request_match(self, websocket: WebSocket):
         user_id = self.active_connections.get(websocket)
-        if not user_id:
+        if not user_id or user_id in self.matching_queue:
             return
-            
-        if user_id in self.matching_queue:
-            return
-            
         self.matching_queue.append(user_id)
         await self.broadcast_global_stats()
-        
-        # Run match looping
         asyncio.create_task(self.process_match(user_id))
 
     async def process_match(self, user_id: int):
-        await asyncio.sleep(0.5) # micro pause to allow queueing
+        await asyncio.sleep(0.5)
         ws = self.user_websockets.get(user_id)
         if not ws or user_id not in self.matching_queue:
             return
-            
-        # Try to match with another searching web user
+
         candidates = [uid for uid in self.matching_queue if uid != user_id]
         if candidates:
             partner_id = candidates[0]
-            
-            # Pop both
             self.matching_queue.remove(user_id)
             self.matching_queue.remove(partner_id)
-            
-            # Sync session matching
             self.active_matches[user_id] = partner_id
             self.active_matches[partner_id] = user_id
-            
-            ws_partner = self.user_websockets.get(partner_id)
-            self.websocket_pairs[ws] = ws_partner
-            self.websocket_pairs[ws_partner] = ws
-            
-            # Load display tags
+            pws = self.user_websockets.get(partner_id)
+            self.websocket_pairs[ws] = pws
+            self.websocket_pairs[pws] = ws
+
             db = await get_db()
-            cursor_u = await db.execute("SELECT display_name, gender, age_group FROM web_users WHERE id = ?", (user_id,))
-            u_row = await cursor_u.fetchone()
-            
-            cursor_p = await db.execute("SELECT display_name, gender, age_group FROM web_users WHERE id = ?", (partner_id,))
-            p_row = await cursor_p.fetchone()
-            
-            u_name = u_row[0] if u_row else "Stranger"
-            p_name = p_row[0] if p_row else "Stranger"
-            
-            # Send match payloads
+            cur_u = await db.execute("SELECT gender, age_group FROM web_users WHERE id=?", (user_id,))
+            cur_p = await db.execute("SELECT gender, age_group FROM web_users WHERE id=?", (partner_id,))
+            u_row = await cur_u.fetchone()
+            p_row = await cur_p.fetchone()
+
             try:
                 await ws.send_json({
-                    "type": "matched", 
+                    "type": "matched",
                     "partner_name": "Stranger",
-                    "gender": p_row[1] if p_row else "unset", 
-                    "age": p_row[2] if p_row else "unset"
+                    "gender": p_row[0] if p_row else "unset",
+                    "age": p_row[1] if p_row else "unset"
                 })
             except Exception:
                 pass
-                
             try:
-                await ws_partner.send_json({
-                    "type": "matched", 
+                await pws.send_json({
+                    "type": "matched",
                     "partner_name": "Stranger",
-                    "gender": u_row[1] if u_row else "unset", 
-                    "age": u_row[2] if u_row else "unset"
+                    "gender": u_row[0] if u_row else "unset",
+                    "age": u_row[1] if u_row else "unset"
                 })
             except Exception:
                 pass
-                
             await self.broadcast_global_stats()
             return
-            
-        # Fallback to AI Companion bot after 4 seconds of searching
+
+        # Fallback: bot companion after 4s
         await asyncio.sleep(3.5)
         ws = self.user_websockets.get(user_id)
         if ws and user_id in self.matching_queue:
             self.matching_queue.remove(user_id)
-            
-            # Select random preset personality
             preset = random.choice([
-                {"name": "Alex", "avatar": "🎮", "gender": "male", "age": "18-24", "interests": "Gaming, Tech", "bio": "React dev and gamer."},
-                {"name": "Sophia", "avatar": "🧠", "gender": "female", "age": "25-34", "interests": "Philosophy, Art", "bio": "Coffee and Camus."},
-                {"name": "Emma", "avatar": "🎵", "gender": "female", "age": "25-34", "interests": "Music, Art", "bio": "Indie band vocalist."}
+                {"name": "Alex", "gender": "male", "age": "18-24",
+                 "bio": "React dev and gamer.", "interests": ["Gaming 🎮", "Tech 💻"]},
+                {"name": "Sophia", "gender": "female", "age": "25-34",
+                 "bio": "Coffee and Camus.", "interests": ["Philosophy 🧠", "Art 🎨"]},
+                {"name": "Mia", "gender": "female", "age": "18-24",
+                 "bio": "Indie music lover.", "interests": ["Music 🎵", "Memes 😂"]},
             ])
-            
             try:
                 await ws.send_json({
                     "type": "matched",
@@ -491,22 +493,21 @@ class ConnectionManager:
                 })
             except Exception:
                 pass
-                
             await self.broadcast_global_stats()
 
     async def relay_message(self, websocket: WebSocket, text: str):
-        partner_ws = self.websocket_pairs.get(websocket)
-        if partner_ws:
+        pws = self.websocket_pairs.get(websocket)
+        if pws:
             try:
-                await partner_ws.send_json({"type": "msg", "text": text})
+                await pws.send_json({"type": "msg", "text": text})
             except Exception:
                 pass
 
     async def relay_typing(self, websocket: WebSocket, active: bool):
-        partner_ws = self.websocket_pairs.get(websocket)
-        if partner_ws:
+        pws = self.websocket_pairs.get(websocket)
+        if pws:
             try:
-                await partner_ws.send_json({"type": "typing", "active": active})
+                await pws.send_json({"type": "typing", "active": active})
             except Exception:
                 pass
 
@@ -516,112 +517,83 @@ class ConnectionManager:
             self.matching_queue.remove(user_id)
         await self.broadcast_global_stats()
 
-    # Rooms Messaging
     async def join_room(self, websocket: WebSocket, room_id: int):
         if room_id not in self.room_connections:
             self.room_connections[room_id] = []
-        self.room_connections[room_id].append(websocket)
+        if websocket not in self.room_connections[room_id]:
+            self.room_connections[room_id].append(websocket)
         await self.broadcast_room_stats(room_id)
 
-    async def broadcast_room_message(self, room_id: int, sender_name: str, text: str):
-        if room_id in self.room_connections:
-            # Relays room text payload to all active room subscribers
-            dead_sockets = []
-            for ws in self.room_connections[room_id]:
-                try:
-                    await ws.send_json({
-                        "type": "room_msg",
-                        "sender": sender_name,
-                        "text": text,
-                        "room_id": room_id
-                    })
-                except Exception:
-                    dead_sockets.append(ws)
-            # Cleanup inactive sockets
-            for ws in dead_sockets:
-                self.room_connections[room_id].remove(ws)
-
-    # Real-Time Broadcast Metrics
-    async def broadcast_global_stats(self):
-        online_count = len(self.active_connections)
-        matching_count = len(self.matching_queue) + len(self.active_matches)
-        
-        # Broadcast globally to all active websockets
-        dead_sockets = []
-        for ws in self.active_connections.keys():
+    async def broadcast_room_message(self, room_id: int, sender: str, text: str):
+        dead = []
+        for ws in self.room_connections.get(room_id, []):
             try:
-                await ws.send_json({
-                    "type": "stats",
-                    "online": max(online_count, 1),
-                    "matching": matching_count
-                })
+                await ws.send_json({"type": "room_msg", "sender": sender, "text": text, "room_id": room_id})
             except Exception:
-                dead_sockets.append(ws)
-                
-        for ws in dead_sockets:
+                dead.append(ws)
+        for ws in dead:
+            self.room_connections[room_id].remove(ws)
+
+    async def broadcast_global_stats(self):
+        online = len(self.active_connections)
+        matching = len(self.matching_queue) + len(self.active_matches)
+        dead = []
+        for ws in list(self.active_connections.keys()):
+            try:
+                await ws.send_json({"type": "stats", "online": max(online, 1), "matching": matching})
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
             self.active_connections.pop(ws, None)
 
     async def broadcast_room_stats(self, room_id: int):
         count = len(self.room_connections.get(room_id, []))
-        
-        # Notify all active room subscribers
-        dead_sockets = []
-        for ws in self.active_connections.keys():
+        dead = []
+        for ws in list(self.active_connections.keys()):
             try:
-                await ws.send_json({
-                    "type": "room_stats",
-                    "room_id": room_id,
-                    "online": max(count, 1) + 2 # Add static +2 to simulate background user fluctuations
-                })
+                await ws.send_json({"type": "room_stats", "room_id": room_id, "online": max(count + 2, 3)})
             except Exception:
-                dead_sockets.append(ws)
-                
-        for ws in dead_sockets:
+                dead.append(ws)
+        for ws in dead:
             self.active_connections.pop(ws, None)
+
 
 manager = ConnectionManager()
 
-# Background Chatter Task to simulate themed room logs when active
+BOT_CHATTERS = [
+    ("MemeLord 🦖", "Me when the compiler throws 82 errors: *closes laptop*"),
+    ("CoffeeBrain ☕", "Highly recommend trying cold brew with oat milk today."),
+    ("RetroVibe 🌙", "Anyone listening to the synthwave playlist? It hits different."),
+    ("TechExplorer 💻", "Just finished upgrading my SQLite schema — works flawlessly!"),
+    ("GamerX 🎮", "Who is down for Elden Ring? DM me."),
+    ("NightOwl 🦉", "3am and I'm still here. The internet never sleeps."),
+    ("ArtVibes 🎨", "Just painted something surreal tonight. Life is wild."),
+]
+
 async def room_background_chatter_loop():
-    ROOM_BOT_CHATTERS = [
-        {"name": "MemeLord 🦖", "text": "Me when the compiler throws 82 errors: *closes laptop*"},
-        {"name": "CoffeeBrain ☕", "text": "Highly recommend trying cold brew with oat milk today."},
-        {"name": "RetroVibe 🌙", "text": "Anyone listening to the synthwave playlist? It sounds beautiful."},
-        {"name": "TechExplorer 💻", "text": "Just finished upgrading my sqlite schemas, works like a charm!"},
-        {"name": "GamerX 🎮", "text": "Who is down for a fast match in Elden Ring? DM me."}
-    ]
-    
     while True:
-        await asyncio.sleep(random.randint(6, 12))
-        active_rooms = list(manager.room_connections.keys())
+        await asyncio.sleep(random.randint(7, 15))
+        active_rooms = [r for r, ws_list in manager.room_connections.items() if ws_list]
         if active_rooms:
-            target_room = random.choice(active_rooms)
-            if manager.room_connections[target_room]:
-                bot = random.choice(ROOM_BOT_CHATTERS)
-                await manager.broadcast_room_message(target_room, bot["name"], bot["text"])
+            room_id = random.choice(active_rooms)
+            name, text = random.choice(BOT_CHATTERS)
+            await manager.broadcast_room_message(room_id, name, text)
 
-@app.on_event("startup")
-async def start_chatter_task():
-    asyncio.create_task(room_background_chatter_loop())
 
-# ── WebSocket Handler routes ──────────────────────────────────────────
-
+# ── WebSocket Endpoint ────────────────────────────────────────────────────────
 @app.websocket("/ws")
-async def websocket_gateway(websocket: WebSocket, token: str = "guest"):
-    # Authenticate token
+async def websocket_gateway(websocket: WebSocket, token: str = ""):
     user_id = active_sessions.get(token)
     if not user_id:
-        # Close connection if unauthorized
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await websocket.close(code=1008)
         return
-        
+
     await manager.connect(websocket, user_id)
-    
     try:
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
-            
+
             if msg_type == "find":
                 await manager.request_match(websocket)
             elif msg_type == "cancel_find":
@@ -631,33 +603,31 @@ async def websocket_gateway(websocket: WebSocket, token: str = "guest"):
             elif msg_type == "typing":
                 await manager.relay_typing(websocket, data.get("active", False))
             elif msg_type == "join_room":
-                room_id = int(data.get("room_id", 0))
-                await manager.join_room(websocket, room_id)
+                await manager.join_room(websocket, int(data.get("room_id", 0)))
             elif msg_type == "room_msg":
                 room_id = int(data.get("room_id", 0))
-                # Fetch user name from DB
                 db = await get_db()
-                cursor = await db.execute("SELECT display_name FROM web_users WHERE id = ?", (user_id,))
-                row = await cursor.fetchone()
+                cur = await db.execute("SELECT display_name FROM web_users WHERE id=?", (user_id,))
+                row = await cur.fetchone()
                 sender = row[0] if row else "Anonymous"
                 await manager.broadcast_room_message(room_id, sender, data.get("text", ""))
             elif msg_type == "stop":
-                partner_ws = manager.websocket_pairs.get(websocket)
-                if partner_ws:
+                pws = manager.websocket_pairs.get(websocket)
+                if pws:
                     try:
-                        await partner_ws.send_json({"type": "disconnected", "reason": "Stranger stopped chatting"})
+                        await pws.send_json({"type": "disconnected", "reason": "Stranger stopped chatting"})
                     except Exception:
                         pass
                 await manager.disconnect(websocket)
-                # Reconnect standard gateway
                 await manager.connect(websocket, user_id)
-                
+
     except WebSocketDisconnect:
         await manager.disconnect(websocket)
     except Exception as e:
-        print("WS Error:", e)
+        print(f"WS Error: {e}")
         await manager.disconnect(websocket)
 
-# ── Mount static folder last ──────────────────────────────────────────
+
+# ── Serve static frontend files last ─────────────────────────────────────────
 if os.path.exists("web"):
     app.mount("/", StaticFiles(directory="web", html=True), name="static")
